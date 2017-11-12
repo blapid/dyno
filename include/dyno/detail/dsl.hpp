@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "ctti/type_id.hpp"
 
 namespace dyno {
 
@@ -43,14 +44,90 @@ namespace detail {
     delayed_call(delayed_call&&) = default;
   };
 
+  
+  template<typename PrefixStr, std::uint64_t Hash>
+  struct append_ctti_hash {
+    using tmp = std::integral_constant<char, Hash % 10 + '0'>;
+    using cur_str = decltype(PrefixStr{} + boost::hana::string<tmp::value>{});
+    using str = typename append_ctti_hash<cur_str, Hash / 10>::str;
+  };
+  template<typename PrefixStr>
+  struct append_ctti_hash<PrefixStr, 0> {
+    using str = PrefixStr;
+  };
+
+  template<typename Ret, typename Arg, typename... Rest>
+  static boost::hana::tuple<Rest...> all_but_first_argument_helper(Ret(*) (Arg, Rest...));
+  
+  template<typename Ret, typename F, typename Arg, typename... Rest>
+  static boost::hana::tuple<Rest...> all_but_first_argument_helper(Ret(F::*) (Arg, Rest...));
+  
+  template<typename Ret, typename F, typename Arg, typename... Rest>
+  static boost::hana::tuple<Rest...> all_but_first_argument_helper(Ret(F::*) (Arg, Rest...) const);
+
+  template<typename Ret, typename F>
+  static boost::hana::tuple<> all_but_first_argument_helper(Ret(F::*) ());
+  
+  template<typename Ret, typename F>
+  static boost::hana::tuple<> all_but_first_argument_helper(Ret(F::*) () const);
+  
+  template <typename F>
+  static decltype(all_but_first_argument_helper( &F::operator() )) all_but_first_argument_helper(F);  
+
+  template <typename F>
+  using all_but_first_argument = decltype(all_but_first_argument_helper(std::declval<F>()));
+
+  template<typename T>
+  struct type_hash {
+    using F = decltype(&T::operator());
+    using C = all_but_first_argument<F>;
+    static constexpr auto hash = ctti::type_id<all_but_first_argument<F>>().hash();
+  };
+  template<typename Ret, typename This, typename ...Args>
+  struct type_hash<boost::hana::basic_type<Ret(This, Args...)>> {
+    using arg_tuple = boost::hana::tuple<Args...>;
+    static constexpr auto hash = ctti::type_id<arg_tuple>().hash();
+  };
+  template<typename Ret>
+  struct type_hash<boost::hana::basic_type<Ret()>> {
+    using arg_tuple = boost::hana::tuple<>;
+    static constexpr auto hash = ctti::type_id<arg_tuple>().hash();
+  };
+  template<typename F, typename Ret, typename This, typename ...Args>
+  struct type_hash<Ret (F::*)(This, Args...)> {
+    using arg_tuple = boost::hana::tuple<Args...>;
+    typename arg_tuple::aa a;
+    static constexpr auto hash = ctti::type_id<arg_tuple>().hash();
+  };
+  template<typename F, typename Ret, typename This, typename ...Args>
+  struct type_hash<Ret (F::*)(This, Args...) const> {
+    using arg_tuple = boost::hana::tuple<Args...>;
+    static constexpr auto hash = ctti::type_id<arg_tuple>().hash();
+  };
+  template<typename F, typename Ret>
+  struct type_hash<Ret (F::*)()> {
+    using arg_tuple = boost::hana::tuple<>;
+    static constexpr auto hash = ctti::type_id<arg_tuple>().hash();
+  };
+  template<typename F, typename Ret>
+  struct type_hash<Ret (F::*)() const> {
+    using arg_tuple = boost::hana::tuple<>;
+    static constexpr auto hash = ctti::type_id<arg_tuple>().hash();
+  };
+  
+  template<typename PrefixStr, typename Function>
+  using NameWithHash = typename append_ctti_hash<PrefixStr, type_hash<Function>::hash>::str;
+  
+
   template <char ...c>
   struct string : boost::hana::string<c...> {
     template <typename Function>
-    constexpr boost::hana::pair<string, Function>
-    operator=(Function f) const {
+    constexpr auto operator=(Function f) const {
       static_assert(std::is_empty<Function>{},
         "Only stateless function objects can be used to define vtables");
-      return {{}, f};
+
+      using Name = decltype(*this);
+      return boost::hana::pair<NameWithHash<Name, Function>, Function>{{}, f};
     }
 
     template <typename ...Args>

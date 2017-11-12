@@ -295,7 +295,8 @@ struct remote_storage {
     if (ptr_ == nullptr)
       return;
 
-    vtable["destruct"_s](ptr_);
+    constexpr auto destruct_name = boost::hana::first("destruct"_s = dyno::function<void(decltype(ptr_))>);
+    vtable[destruct_name](ptr_);
     std::free(ptr_);
   }
 

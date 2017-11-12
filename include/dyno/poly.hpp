@@ -125,22 +125,43 @@ public:
     return boost::hana::unpack(std::move(delayed.args), injected);
   }
 
-  template <typename Function,
-    bool HasClause = decltype(boost::hana::contains(dyno::clause_names(Concept{}), Function{})){},
-    std::enable_if_t<HasClause>* = nullptr
-  >
-  constexpr decltype(auto) virtual_(Function name) const {
-    using Signature = typename decltype(Concept{}.get_signature(name))::type;
-    return virtual_impl(boost::hana::basic_type<Signature>{}, name);
-  }
+  template <typename PolyT, typename FunctionName>
+  struct virtual_callable {
+    virtual_callable(PolyT *poly) : poly_(poly) {}
 
-  template <typename Function,
-    bool HasClause = decltype(boost::hana::contains(dyno::clause_names(Concept{}), Function{})){},
-    std::enable_if_t<!HasClause>* = nullptr
-  >
-  constexpr decltype(auto) virtual_(Function) const {
-    static_assert(HasClause, "dyno::poly::virtual_: Trying to access a function "
-                             "that is not part of the Concept");
+    template <typename FullName,
+      bool HasClause = decltype(boost::hana::contains(dyno::clause_names(Concept{}), FullName{})){},
+      std::enable_if_t<HasClause>* = nullptr
+    >
+    constexpr void check_exists() { }
+
+    template <typename FullName,
+      bool HasClause = decltype(boost::hana::contains(dyno::clause_names(Concept{}), FullName{})){},
+      std::enable_if_t<!HasClause>* = nullptr
+    >
+    constexpr void check_exists() { 
+      static_assert(HasClause, "dyno::poly::virtual_: Trying to access a function "
+        "that is not part of the Concept");
+     }
+
+    template <typename ...Args>
+    auto operator() (Args&&... args) {
+      using call_t = boost::hana::basic_type<void(Args...)>;
+      using name_t = detail::NameWithHash<FunctionName, call_t>;
+      check_exists<name_t>();
+
+      using Signature = typename decltype(Concept{}.get_signature(name_t{}))::type;
+      return poly_->virtual_impl(boost::hana::basic_type<Signature>{}, name_t{})(std::forward<decltype(args)>(args)...);      
+    }
+
+  private:
+    PolyT *poly_;
+  };
+
+  template <typename FunctionName>
+  constexpr decltype(auto) virtual_(FunctionName) const {
+    using PolyT = std::remove_reference_t<decltype(*this)>;
+    return virtual_callable<PolyT, FunctionName>(this);
   }
 
   // Returns a pointer to the underlying storage.
